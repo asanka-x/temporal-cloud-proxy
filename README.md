@@ -199,7 +199,7 @@ export AWS_SECRET_ACCESS_KEY=your_secret_key
 export AWS_REGION=your_region
 ```
 
-### Azure KMS Configuration
+### Azure Key Vault Configuration
 
 1. Create or import a key in Azure Key Vault:
 
@@ -222,7 +222,7 @@ az login
 
 ```yaml
 encryption:
-  type: "azure-kms"
+  type: "azure-keyvault"
   config:
     key-id: "https://<vault-name>.vault.azure.net/keys/<key-name>"
 ```

@@ -141,7 +141,7 @@ func newCodecFactoryProvider(configProvider config.ConfigProvider, logger *zap.L
 		), nil
 	}
 
-	cf.providers["azure-kms"] = func(args EncryptionCodecOptions) (converter.PayloadCodec, error) {
+	cf.providers["azure-keyvault"] = func(args EncryptionCodecOptions) (converter.PayloadCodec, error) {
 		rawKeyId, ok := args.LocalEncryptionConfig.Config["key-id"]
 		if !ok {
 			return nil, fmt.Errorf("key not found in config")

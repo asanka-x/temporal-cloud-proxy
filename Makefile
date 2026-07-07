@@ -8,7 +8,7 @@ OUTPUT_PATH := $(OUTPUT_DIR)/$(BINARY_NAME)
 all: test build
 
 build:
-	go build -o $(OUTPUT_PATH) $(CMD_DIR)
+	go build -tags azure -o $(OUTPUT_PATH) $(CMD_DIR)
 
 clean:
 	rm -f $(OUTPUT_PATH)
