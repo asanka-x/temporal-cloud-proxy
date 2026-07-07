@@ -5,7 +5,7 @@ A Temporal Cloud proxy that handles Temporal namespace authentication, payload e
 ## Key Features
 
 - **Multi-workload Support** - Handle multiple Temporal workload configurations through a single proxy instance
-- **Payload Encryption/Decryption** - AWS KMS and GCP KMS support with intelligent caching for performance
+- **Payload Encryption/Decryption** - AWS KMS, Azure Key Vault KMS, and GCP KMS support with intelligent caching for performance
 - **Temporal Cloud Namespace Authentication** - Support for mTLS and API keys
 - **Worker Authentication** - Support for JWT (with JWKS) and SPIFFE/SPIRE
 - **Observability** - Built-in Prometheus metrics, Grafana dashboards, and structured logging
@@ -16,6 +16,7 @@ A Temporal Cloud proxy that handles Temporal namespace authentication, payload e
 
 - Go 1.24 or later
 - AWS account with KMS permissions (for AWS KMS encryption)
+- Azure subscription with an Azure Key Vault key (for Azure KMS encryption)
 - GCP account with KMS permissions (for GCP KMS encryption)
 - Temporal Cloud account
 
@@ -197,6 +198,36 @@ export AWS_ACCESS_KEY_ID=your_access_key
 export AWS_SECRET_ACCESS_KEY=your_secret_key
 export AWS_REGION=your_region
 ```
+
+### Azure Key Vault Configuration
+
+1. Create or import a key in Azure Key Vault:
+
+- In the Azure portal, open your Key Vault
+- Go to Keys
+- Create or import a key (for example, RSA or AES)
+- Copy the full key URL, such as:
+
+```text
+https://<vault-name>.vault.azure.net/keys/<key-name>
+```
+
+2. Sign in to Azure so the proxy can authenticate:
+
+```bash
+az login
+```
+
+3. Configure the proxy:
+
+```yaml
+encryption:
+  type: "azure-keyvault"
+  config:
+    key-id: "https://<vault-name>.vault.azure.net/keys/<key-name>"
+```
+
+4. If you are running in Azure and want to avoid interactive login, configure Managed Identity or a service principal for the proxy host.
 
 ### GCP KMS Configuration
 

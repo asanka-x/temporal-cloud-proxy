@@ -1,9 +1,12 @@
 package codec
 
 import (
-	gcpKms "cloud.google.com/go/kms/apiv1"
 	"context"
 	"fmt"
+	"os"
+	"time"
+
+	gcpKms "cloud.google.com/go/kms/apiv1"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	awsKms "github.com/aws/aws-sdk-go/service/kms"
@@ -12,8 +15,7 @@ import (
 	"github.com/temporal-sa/temporal-cloud-proxy/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/converter"
-	"os"
-	"time"
+	"go.uber.org/zap"
 )
 
 //
@@ -34,6 +36,7 @@ type (
 		LocalEncryptionConfig config.EncryptionConfig
 		CodecContext          map[string]string
 		MetricsHandler        *metrics.MetricsHandler
+		Logger                *zap.Logger
 	}
 
 	EncryptionCodecConstructor func(args EncryptionCodecOptions) (converter.PayloadCodec, error)
@@ -44,7 +47,7 @@ type (
 	}
 )
 
-func newCodecFactoryProvider(configProvider config.ConfigProvider) (EncryptionCodecFactory, error) {
+func newCodecFactoryProvider(configProvider config.ConfigProvider, logger *zap.Logger) (EncryptionCodecFactory, error) {
 	var cachingConfig *crypto.CachingConfig
 
 	providerCacheCfg := configProvider.GetProxyConfig().Encryption.Caching
@@ -96,6 +99,7 @@ func newCodecFactoryProvider(configProvider config.ConfigProvider) (EncryptionCo
 			args.CodecContext,
 			keyId,
 			args.MetricsHandler,
+			args.Logger,
 			cf.cachingConfig,
 		), nil
 	}
@@ -132,6 +136,41 @@ func newCodecFactoryProvider(configProvider config.ConfigProvider) (EncryptionCo
 			args.CodecContext,
 			keyName,
 			args.MetricsHandler,
+			args.Logger,
+			cf.cachingConfig,
+		), nil
+	}
+
+	cf.providers["azure-keyvault"] = func(args EncryptionCodecOptions) (converter.PayloadCodec, error) {
+		rawKeyId, ok := args.LocalEncryptionConfig.Config["key-id"]
+		if !ok {
+			return nil, fmt.Errorf("key not found in config")
+		}
+		keyId, ok := rawKeyId.(string)
+		if !ok {
+			return nil, fmt.Errorf("key is not a string")
+		}
+
+		// Create azcrypto client adapter
+		// Note: NewAzCryptoAdapter uses DefaultAzureCredential.
+		azAdapter, err := crypto.NewAzCryptoAdapter(keyId, args.Logger)
+		if err != nil {
+			return nil, err
+		}
+
+		azureMaterialsManager := crypto.NewAzureKMSProvider(azAdapter, crypto.AzureKMSOptions{
+			KeyID:     keyId,
+			Algorithm: "RSA-OAEP-256",
+		})
+
+		args.MetricsHandler.AddAttributes(attribute.String("encryption_key", keyId))
+
+		return NewEncryptionCodecWithCaching(
+			azureMaterialsManager,
+			args.CodecContext,
+			keyId,
+			args.MetricsHandler,
+			args.Logger,
 			cf.cachingConfig,
 		), nil
 	}

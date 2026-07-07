@@ -11,6 +11,7 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"go.uber.org/zap"
 )
 
 const (
@@ -33,6 +34,7 @@ type Codec struct {
 	Cipher         *crypto.Cipher
 	CodecContext   map[string]string
 	MetricsHandler client.MetricsHandler
+	Logger         *zap.Logger
 }
 
 // NewEncryptionCodecWithCaching creates a new encryption codec with configurable caching.
@@ -41,6 +43,7 @@ func NewEncryptionCodecWithCaching(
 	codecContext map[string]string,
 	encryptionKeyID string,
 	metricsHandler client.MetricsHandler,
+	logger *zap.Logger,
 	cachingConfig *crypto.CachingConfig,
 ) converter.PayloadCodec {
 	// Set default caching config if not provided
@@ -67,6 +70,7 @@ func NewEncryptionCodecWithCaching(
 		Cipher:         cipher,
 		CodecContext:   codecContext,
 		MetricsHandler: metricsHandler,
+		Logger:         logger,
 	}
 }
 
@@ -89,12 +93,25 @@ func (e *Codec) createCryptoContext(purpose, encryptionKeyID string, codecContex
 func (e *Codec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error) {
 	start := time.Now()
 	e.MetricsHandler.Counter(metrics.EncryptRequests).Inc(1)
+	if e.Logger != nil {
+		e.Logger.Info("encrypting payload batch",
+			zap.Int("count", len(payloads)),
+			zap.String("encryption_key", e.KeyID),
+			zap.String("namespace", e.CodecContext["namespace"]),
+		)
+	}
 
 	result := make([]*commonpb.Payload, len(payloads))
 	for i, p := range payloads {
 		origBytes, err := p.Marshal()
 		if err != nil {
 			e.MetricsHandler.Counter(metrics.EncryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("payload marshal failed before encryption",
+					zap.Int("index", i),
+					zap.Error(err),
+				)
+			}
 			return payloads, err
 		}
 
@@ -113,6 +130,12 @@ func (e *Codec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 		ciphertext, encryptedKey, err := e.Cipher.Encrypt(context.Background(), input)
 		if err != nil {
 			e.MetricsHandler.Counter(metrics.EncryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("payload encryption failed",
+					zap.Int("index", i),
+					zap.Error(err),
+				)
+			}
 			return payloads, err
 		}
 
@@ -123,6 +146,12 @@ func (e *Codec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 				MetadataEncryptedDataKey:   encryptedKey,
 			},
 			Data: ciphertext,
+		}
+		if e.Logger != nil {
+			e.Logger.Info("encrypted payload",
+				zap.Int("index", i),
+				zap.String("encryption_key", e.KeyID),
+			)
 		}
 	}
 
@@ -144,9 +173,26 @@ func (e *Codec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 			continue
 		}
 
+		encryptionKeyID := "unknown"
+		if v, ok := p.Metadata[MetadataEncryptionKeyID]; ok {
+			encryptionKeyID = string(v)
+		}
+		if e.Logger != nil {
+			e.Logger.Info("decrypting payload",
+				zap.Int("index", i),
+				zap.String("encryption_key", encryptionKeyID),
+				zap.String("namespace", e.CodecContext["namespace"]),
+			)
+		}
+
 		keyID, ok := p.Metadata[MetadataEncryptionKeyID]
 		if !ok {
 			e.MetricsHandler.Counter(metrics.DecryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("encrypted payload missing key id metadata",
+					zap.Int("index", i),
+				)
+			}
 			return payloads, fmt.Errorf("no encryption key id")
 		}
 
@@ -157,6 +203,11 @@ func (e *Codec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 		encryptedKey, ok := p.Metadata[MetadataEncryptedDataKey]
 		if !ok {
 			e.MetricsHandler.Counter(metrics.DecryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("encrypted payload missing encrypted key metadata",
+					zap.Int("index", i),
+				)
+			}
 			return payloads, fmt.Errorf("no encrypted key in payload")
 		}
 
@@ -170,6 +221,12 @@ func (e *Codec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 		decrypted, err := e.Cipher.Decrypt(context.Background(), input)
 		if err != nil {
 			e.MetricsHandler.Counter(metrics.DecryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("payload decryption failed",
+					zap.Int("index", i),
+					zap.Error(err),
+				)
+			}
 			return payloads, err
 		}
 
@@ -177,7 +234,18 @@ func (e *Codec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error
 		err = result[i].Unmarshal(decrypted)
 		if err != nil {
 			e.MetricsHandler.Counter(metrics.DecryptErrors).Inc(1)
+			if e.Logger != nil {
+				e.Logger.Error("payload unmarshal failed after decryption",
+					zap.Int("index", i),
+					zap.Error(err),
+				)
+			}
 			return payloads, err
+		}
+		if e.Logger != nil {
+			e.Logger.Info("decrypted payload",
+				zap.Int("index", i),
+			)
 		}
 	}
 
